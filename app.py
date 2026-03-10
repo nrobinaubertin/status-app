@@ -97,10 +97,10 @@ def index():
 
     # --- Time Information ---
     # Get the current time in UTC.
-    now_utc = datetime.datetime.utcnow()
+    now_utc = datetime.datetime.now(datetime.UTC)
 
     # Format the time into a standard ISO 8601 string.
-    time_utc_iso = now_utc.isoformat() + "Z"
+    time_utc_iso = now_utc.isoformat().replace("+00:00", "Z")
 
     # --- Request Information ---
     request_headers = dict(flask.request.headers)
