@@ -1,27 +1,30 @@
-import flask
-import socket
+"""Status app Flask workload."""
+
 import datetime
 import os
 import platform
-import uuid
+import socket
 import time
+import uuid
+
+import flask
 
 app = flask.Flask(__name__)
 
 
 @app.before_request
 def before_request_timing():
-    """
-    Record the start time of the request processing.
-    This is stored in Flask's 'g' object, which persists for a single request.
+    """Record the request start time.
+
+    Store the start time in Flask's g for later diagnostics.
     """
     flask.g.start_time = time.perf_counter()
 
 
 def get_memory_info_linux():
-    """
-    Parses /proc/meminfo on Linux systems to get memory usage.
-    Returns a dictionary with memory stats or None if not on Linux or file not found.
+    """Parse /proc/meminfo on Linux systems.
+
+    Return a dictionary with memory stats or an explanatory string when unavailable.
     """
     if platform.system() != "Linux":
         return "Not available on this OS"
@@ -59,10 +62,7 @@ def get_memory_info_linux():
 
 @app.route("/")
 def index():
-    """
-    This route gathers and returns a variety of system and network information.
-    """
-
+    """Return system and request information as JSON."""
     # --- System Load (Unix-like only) ---
     system_load = "Not available on this OS"
     if hasattr(os, "getloadavg"):
