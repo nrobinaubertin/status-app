@@ -91,9 +91,7 @@ def index():
     try:
         server_ip = socket.gethostbyname(hostname)
     except socket.gaierror:
-        server_ip = (
-            "127.0.0.1"  # Fallback for environments where hostname isn't resolvable
-        )
+        server_ip = "127.0.0.1"  # Fallback for environments where hostname isn't resolvable
 
     # --- Time Information ---
     # Get the current time in UTC.
