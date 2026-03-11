@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import pathlib
@@ -8,7 +9,8 @@ import jubilant
 import pytest
 
 APP_NAME = "status-app"
-APP_PORT = 8080
+APP_PORT = 8000
+RESOURCE_NAME = "flask-app-image"
 
 
 def _ensure_juju_available() -> None:
@@ -24,14 +26,27 @@ def _ensure_juju_available() -> None:
         pytest.skip(f"Juju not available: {exc}")
 
 
-def _build_charm(charm_root: pathlib.Path) -> pathlib.Path:
+def _resolve_path(path: str, repo_root: pathlib.Path) -> pathlib.Path:
+    candidate = pathlib.Path(path)
+    if not candidate.is_absolute():
+        candidate = repo_root / candidate
+    return candidate.resolve()
+
+
+def _build_charm(charm_root: pathlib.Path, pytestconfig: pytest.Config) -> pathlib.Path:
+    repo_root = charm_root.parent
+    charm_file = pytestconfig.getoption("--charm-file")
+    if charm_file:
+        return _resolve_path(charm_file, repo_root)
+
     charm_file = os.environ.get("STATUS_APP_CHARM_FILE")
     if charm_file:
-        return pathlib.Path(charm_file).resolve()
+        return _resolve_path(charm_file, repo_root)
 
     if os.environ.get("STATUS_APP_BUILD_ARTIFACTS") != "1":
         pytest.skip(
-            "Set STATUS_APP_CHARM_FILE or STATUS_APP_BUILD_ARTIFACTS=1 to build the charm"
+            "Set --charm-file, STATUS_APP_CHARM_FILE, or STATUS_APP_BUILD_ARTIFACTS=1 "
+            "to build the charm"
         )
 
     if not shutil.which("charmcraft"):
@@ -44,44 +59,47 @@ def _build_charm(charm_root: pathlib.Path) -> pathlib.Path:
     return candidates[-1]
 
 
-def _build_rock(repo_root: pathlib.Path) -> pathlib.Path:
-    rock_file = os.environ.get("STATUS_APP_ROCK_FILE")
-    if rock_file:
-        return pathlib.Path(rock_file).resolve()
+def _rock_image_from_config(pytestconfig: pytest.Config) -> str | None:
+    return pytestconfig.getoption("--rock-image") or os.environ.get("STATUS_APP_ROCK_IMAGE")
 
-    if os.environ.get("STATUS_APP_BUILD_ARTIFACTS") != "1":
-        pytest.skip(
-            "Set STATUS_APP_ROCK_FILE or STATUS_APP_BUILD_ARTIFACTS=1 to build the rock"
-        )
 
-    if not shutil.which("rockcraft"):
-        pytest.skip("rockcraft not available; set STATUS_APP_ROCK_FILE to a packed rock")
+def _juju_context(pytestconfig: pytest.Config) -> contextlib.AbstractContextManager[jubilant.Juju]:
+    use_existing = pytestconfig.getoption("--use-existing")
+    if use_existing:
+        return contextlib.nullcontext(jubilant.Juju())
 
-    subprocess.run(["rockcraft", "pack"], cwd=repo_root, check=True, text=True)
-    candidates = sorted(repo_root.glob(f"{APP_NAME}_*.rock"), key=lambda p: p.stat().st_mtime)
-    if not candidates:
-        pytest.skip("No packed rock found after running rockcraft pack")
-    return candidates[-1]
+    model = pytestconfig.getoption("--model")
+    if model:
+        return contextlib.nullcontext(jubilant.Juju(model=model))
+
+    keep_models = pytestconfig.getoption("--keep-models")
+    return jubilant.temp_model(keep=keep_models)
 
 
 @pytest.mark.integration
-def test_deploy_and_fetch_output():
+def test_deploy_and_fetch_output(pytestconfig: pytest.Config):
     _ensure_juju_available()
 
     repo_root = pathlib.Path(__file__).resolve().parents[3]
     charm_root = repo_root / "charm"
 
-    charm_file = _build_charm(charm_root)
-    rock_file = _build_rock(repo_root)
+    use_existing = pytestconfig.getoption("--use-existing")
+    charm_file = None
+    rock_image = _rock_image_from_config(pytestconfig)
+    if not use_existing:
+        charm_file = _build_charm(charm_root, pytestconfig)
+        if not rock_image:
+            pytest.skip("Set --rock-image or STATUS_APP_ROCK_IMAGE to deploy the rock image")
 
-    with jubilant.temp_model() as juju:
+    with _juju_context(pytestconfig) as juju:
         juju.wait_timeout = 900
-        juju.deploy(
-            str(charm_file),
-            app=APP_NAME,
-            resources={"app-image": str(rock_file)},
-        )
-        juju.wait(jubilant.all_active)
+        if not use_existing:
+            juju.deploy(
+                str(charm_file),
+                app=APP_NAME,
+                resources={RESOURCE_NAME: rock_image},
+            )
+            juju.wait(jubilant.all_active)
 
         task = juju.exec(
             "python3",
