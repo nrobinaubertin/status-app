@@ -2,3 +2,4 @@
 *.charm
 .venv/
 __pycache__/
+.coverage
